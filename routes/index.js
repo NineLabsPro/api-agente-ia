@@ -5,7 +5,6 @@ const openaiClient = require('../config/openai.config');
 const { systemPrompt } = require('../prompts/system.prompt');
 const { sendMessage } = require('../services/evolution');
 
-
 /// Redis Functions
 const setMemory = async (memory) => {
   await redisClient.set('memory', JSON.stringify(memory));
