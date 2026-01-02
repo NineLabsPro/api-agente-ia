@@ -1,18 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const redisClient = require('../config/redis.config');
 const openaiClient = require('../config/openai.config');
 const { systemPrompt } = require('../prompts/system.prompt');
 const { sendMessage } = require('../services/evolution');
+const { salvarMemoria, obterMemoria } = require('../services/memory');
 
-/// Redis Functions
-const setMemory = async (memory) => {
-  await redisClient.set('memory', JSON.stringify(memory));
+// Funções auxiliares
+const inicializarMemoria = () => {
+  return [{ role: 'system', content: systemPrompt }];
 };
 
-const getMemory = async () => {
-  const memory = await redisClient.get('memory');
-  return memory ? JSON.parse(memory) : null;
+const adicionarMensagem = (memoria, role, conteudo) => {
+  memoria.push({ role, content: conteudo });
+  return memoria;
+};
+
+const gerarResposta = async (memoria) => {
+  const resposta = await openaiClient.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: memoria,
+  });
+  return resposta.choices[0].message.content;
 };
 
 router.post('/chat', async (req, res) => {
@@ -26,45 +34,30 @@ router.post('/chat', async (req, res) => {
   }
 
   try {
-    // 1️⃣ Busca o histórico salvo no Redis (ou cria novo)
-    let memory = await getMemory();
-    if (!memory) {
-      memory = [
-        {
-          role: 'system',
-          content: systemPrompt,
-        },
-      ];
-    }
+    // Busca ou inicializa a memória
+    let memoria = await obterMemoria() || inicializarMemoria();
 
-    // 2️⃣ Adiciona a nova mensagem do usuário ao histórico
-    memory.push({ role: 'user', content: message });
+    // Adiciona mensagem do usuário
+    memoria = adicionarMensagem(memoria, 'user', message);
 
-    // 3️⃣ Gera a resposta com base no histórico completo
-    const response = await openaiClient.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: memory,
-    });
+    // Gera resposta do assistente
+    const respostaAssistente = await gerarResposta(memoria);
 
-    const assistantReply = response.choices[0].message.content;
+    // Adiciona resposta ao histórico e salva
+    memoria = adicionarMensagem(memoria, 'assistant', respostaAssistente);
+    await salvarMemoria(memoria);
 
-    // 4️⃣ Adiciona a resposta do assistente ao histórico
-    memory.push({ role: 'assistant', content: assistantReply });
-
-    // 5️⃣ Atualiza o histórico no Redis
-    await setMemory(memory);
-
+    // Envia mensagem via WhatsApp
     sendMessage({
       phoneNumber: '5531997153507',
-      message: assistantReply,
+      message: respostaAssistente,
     });
 
-    // 6️⃣ Retorna a resposta
+    // Retorna resposta
     res.json({
       status: 'success',
-      message: assistantReply,
+      message: respostaAssistente,
     });
-
 
   } catch (error) {
     console.error('Erro no chat:', error);
@@ -74,6 +67,5 @@ router.post('/chat', async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;
